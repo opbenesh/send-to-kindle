@@ -13,6 +13,23 @@ function MainApp() {
   const [user, setUser] = useState<{ email: string, access_token: string } | null>(null);
 
   useEffect(() => {
+    // Check if we are being shared a URL from Android
+    const params = new URLSearchParams(window.location.search);
+    const sharedUrl = params.get('url') || params.get('text') || params.get('title');
+    
+    if (sharedUrl) {
+      // Find a URL in the string (sometimes text is shared as 'Title: http://link')
+      const urlRegex = /(https?:\/\/[^\s]+)/g;
+      const match = sharedUrl.match(urlRegex);
+      if (match) {
+        setUrl(match[0]);
+      } else if (sharedUrl.startsWith('http')) {
+        setUrl(sharedUrl);
+      }
+    }
+  }, []);
+
+  useEffect(() => {
     localStorage.setItem('kindleEmail', kindleEmail);
   }, [kindleEmail]);
   
