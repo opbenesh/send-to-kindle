@@ -8,6 +8,8 @@ const GOOGLE_CLIENT_ID = import.meta.env.VITE_GOOGLE_CLIENT_ID;
 
 function MainApp() {
   const [url, setUrl] = useState('');
+  const [title, setTitle] = useState('');
+  const [author, setAuthor] = useState('');
   const [kindleEmail, setKindleEmail] = useState(() => localStorage.getItem('kindleEmail') || '');
   const [authType, setAuthType] = useState<'smtp' | 'google'>('google');
   const [user, setUser] = useState<{ email: string, access_token: string } | null>(null);
@@ -23,11 +25,31 @@ function MainApp() {
       const match = sharedUrl.match(urlRegex);
       if (match) {
         setUrl(match[0]);
+        fetchMetadata(match[0]);
       } else if (sharedUrl.startsWith('http')) {
         setUrl(sharedUrl);
+        fetchMetadata(sharedUrl);
       }
     }
   }, []);
+
+  const fetchMetadata = async (targetUrl: string) => {
+    if (!targetUrl) return;
+    setStatus({ type: 'loading', message: 'Fetching metadata...' });
+    try {
+      const res = await fetch(`/api/extract?url=${encodeURIComponent(targetUrl)}`);
+      if (res.ok) {
+        const data = await res.json();
+        setTitle(data.title || '');
+        setAuthor(data.author || data.siteName || '');
+        setStatus({ type: null, message: '' });
+      } else {
+        setStatus({ type: 'error', message: 'Could not fetch metadata automatically.' });
+      }
+    } catch (err) {
+      setStatus({ type: 'error', message: 'Failed to connect to backend.' });
+    }
+  };
 
   useEffect(() => {
     localStorage.setItem('kindleEmail', kindleEmail);
@@ -82,6 +104,8 @@ function MainApp() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           url,
+          title,
+          author,
           kindleEmail,
           authType,
           accessToken: user?.access_token,
@@ -98,6 +122,8 @@ function MainApp() {
       if (response.ok) {
         setStatus({ type: 'success', message: 'Article sent to Kindle successfully!' });
         setUrl('');
+        setTitle('');
+        setAuthor('');
       } else {
         setStatus({ type: 'error', message: data.error || 'Failed to send article.' });
       }
@@ -110,20 +136,20 @@ function MainApp() {
 
   return (
     <div className="container">
-      <h1><BookOpen size={32} style={{ verticalAlign: 'middle', marginRight: '10px' }} /> Send to Kindle</h1>
+      <h1><BookOpen size={32} style={{ verticalAlign: 'middle', marginRight: '10px' }} /> Opbenesh's Send to Kindle</h1>
       
       <div className="tabs" style={{ display: 'flex', gap: '10px', marginBottom: '20px' }}>
         <button 
           className={authType === 'google' ? 'active' : ''} 
           onClick={() => setAuthType('google')}
-          style={{ background: authType === 'google' ? '#3498db' : '#eee', color: authType === 'google' ? 'white' : '#333' }}
+          style={{ background: authType === 'google' ? '#3498db' : '#eee', color: authType === 'google' ? 'white' : '#333', fontSize: '14px', padding: '10px' }}
         >
           Google Login
         </button>
         <button 
           className={authType === 'smtp' ? 'active' : ''} 
           onClick={() => setAuthType('smtp')}
-          style={{ background: authType === 'smtp' ? '#3498db' : '#eee', color: authType === 'smtp' ? 'white' : '#333' }}
+          style={{ background: authType === 'smtp' ? '#3498db' : '#eee', color: authType === 'smtp' ? 'white' : '#333', fontSize: '14px', padding: '10px' }}
         >
           Manual SMTP
         </button>
@@ -132,15 +158,55 @@ function MainApp() {
       <form onSubmit={handleSend}>
         <div className="form-group">
           <label htmlFor="url">Article URL</label>
-          <input
-            id="url"
-            type="text"
-            placeholder="https://example.com/article"
-            value={url}
-            onChange={(e) => setUrl(e.target.value)}
-            required
-          />
+          <div style={{ display: 'flex', gap: '8px' }}>
+            <input
+              id="url"
+              type="text"
+              placeholder="https://example.com/article"
+              value={url}
+              onChange={(e) => setUrl(e.target.value)}
+              required
+            />
+            <button 
+              type="button" 
+              onClick={() => fetchMetadata(url)}
+              style={{ width: 'auto', margin: 0, padding: '0 15px', fontSize: '14px' }}
+              disabled={!url || loading}
+            >
+              Fetch
+            </button>
+          </div>
         </div>
+
+        {(title || author) && (
+          <div className="cover-preview" style={{ 
+            background: '#fff', 
+            border: '2px solid #333', 
+            padding: '20px', 
+            marginBottom: '20px', 
+            borderRadius: '4px',
+            textAlign: 'center',
+            boxShadow: '5px 5px 0px rgba(0,0,0,0.1)'
+          }}>
+            <span style={{ fontSize: '10px', textTransform: 'uppercase', color: '#888', letterSpacing: '2px' }}>Ebook Cover Preview</span>
+            <div className="form-group" style={{ marginTop: '15px' }}>
+              <input
+                style={{ textAlign: 'center', fontSize: '1.2em', fontWeight: 'bold', border: 'none', borderBottom: '1px solid #eee' }}
+                value={title}
+                onChange={(e) => setTitle(e.target.value)}
+                placeholder="Article Title"
+              />
+            </div>
+            <div className="form-group">
+              <input
+                style={{ textAlign: 'center', fontSize: '0.9em', color: '#666', border: 'none' }}
+                value={author}
+                onChange={(e) => setAuthor(e.target.value)}
+                placeholder="Author"
+              />
+            </div>
+          </div>
+        )}
 
         <div className="form-group">
           <label htmlFor="kindleEmail">Kindle Email Address</label>
