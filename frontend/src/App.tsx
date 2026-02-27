@@ -46,7 +46,7 @@ function MainApp() {
       } else {
         setStatus({ type: 'error', message: 'Could not fetch metadata automatically.' });
       }
-    } catch (err) {
+    } catch {
       setStatus({ type: 'error', message: 'Failed to connect to backend.' });
     }
   };
@@ -80,7 +80,7 @@ function MainApp() {
           access_token: tokenResponse.access_token
         });
         setStatus({ type: 'success', message: `Signed in as ${userInfo.email}` });
-      } catch (err) {
+      } catch {
         setStatus({ type: 'error', message: 'Failed to get user info from Google' });
       }
     },
@@ -127,7 +127,7 @@ function MainApp() {
       } else {
         setStatus({ type: 'error', message: data.error || 'Failed to send article.' });
       }
-    } catch (error) {
+    } catch {
       setStatus({ type: 'error', message: 'An error occurred. Make sure the backend is running.' });
     } finally {
       setLoading(false);
