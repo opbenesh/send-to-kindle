@@ -1,0 +1,11 @@
+node_modules
+.env
+*.log
+dist
+test-article.epub
+startup.log
+server.log
+vite.log
+run.log
+server-debug.log
+.DS_Store
