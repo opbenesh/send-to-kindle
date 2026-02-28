@@ -33,6 +33,7 @@ app.use(express.json());
 
 const port = process.env.PORT || 3003;
 const TOKEN_PATH = path.join(__dirname, 'tokens.json');
+const BINDS_PATH = path.join(__dirname, 'binds.json');
 const sessions = {}; // Moved to top level
 
 // --- Google OAuth Setup ---
@@ -54,6 +55,20 @@ function saveToken(chatId, tokens) {
   const allTokens = loadTokens();
   allTokens[chatId] = { ...(allTokens[chatId] || {}), ...tokens };
   fs.writeFileSync(TOKEN_PATH, JSON.stringify(allTokens, null, 2));
+}
+
+function loadBindHistory(chatId) {
+  if (!fs.existsSync(BINDS_PATH)) return [];
+  const all = JSON.parse(fs.readFileSync(BINDS_PATH));
+  return all[String(chatId)] || [];
+}
+
+function saveBindToHistory(chatId, { title, urls }) {
+  const all = fs.existsSync(BINDS_PATH) ? JSON.parse(fs.readFileSync(BINDS_PATH)) : {};
+  if (!all[chatId]) all[chatId] = [];
+  all[chatId].unshift({ id: Date.now().toString(), title, urls, sentAt: new Date().toISOString() });
+  if (all[chatId].length > 20) all[chatId].length = 20;
+  fs.writeFileSync(BINDS_PATH, JSON.stringify(all, null, 2));
 }
 
 // --- Helpers ---
@@ -383,6 +398,7 @@ if (botToken) {
     bot.telegram.setMyCommands([
       { command: 'start', description: 'Show welcome message' },
       { command: 'bind', description: 'Start a multi-article collection' },
+      { command: 'history', description: 'View and resend past collections' },
       { command: 'status', description: 'Check your settings' },
       { command: 'login', description: 'Sign in with Google' },
       { command: 'setemail', description: 'Set Kindle email' },
@@ -398,6 +414,7 @@ if (botToken) {
           inline_keyboard: [
             [{ text: '📧 Set Kindle Email', callback_data: 'setup_email' }, { text: '🔑 Google Login', callback_data: 'setup_login' }],
             [{ text: '📋 Check Status', callback_data: 'check_status' }],
+            [{ text: '📚 Bind History', callback_data: 'show_history' }],
             [{ text: '📖 How to use?', callback_data: 'show_help' }]
           ]
         }
@@ -427,7 +444,7 @@ if (botToken) {
       ctx.reply(statusMsg, { parse_mode: 'Markdown' });
     });
     bot.action('show_help', (ctx) => {
-      ctx.reply('Commands:\n/bind - Start a multi-article collection\n/status - Check settings\n/login - Google sign-in\n/setemail - Set Kindle email\n\nSimply send me any link to send it instantly!');
+      ctx.reply('Commands:\n/bind - Start a multi-article collection\n/history - View and resend past collections\n/status - Check settings\n/login - Google sign-in\n/setemail - Set Kindle email\n\nSimply send me any link to send it instantly!');
     });
 
     bot.help((ctx) => {
@@ -507,6 +524,7 @@ if (botToken) {
           kindleEmail: userData.kindleEmail,
           chatId: chatId
         });
+        saveBindToHistory(chatId, { title: session.title, urls: session.urls });
         await ctx.reply('✅ Collection sent to your Kindle!');
         delete sessions[chatId];
       } catch (err) {
@@ -533,6 +551,7 @@ if (botToken) {
           kindleEmail: userData.kindleEmail,
           chatId: chatId
         });
+        saveBindToHistory(chatId, { title: session.title, urls: session.urls });
         ctx.reply('✅ Collection sent to your Kindle!');
         delete sessions[chatId];
       } catch (err) {
@@ -555,6 +574,119 @@ if (botToken) {
       } else {
         ctx.reply('No active session to cancel.');
       }
+    });
+
+    function buildHistoryKeyboard(chatId) {
+      const binds = loadBindHistory(chatId);
+      if (!binds.length) return null;
+      return binds.slice(0, 8).map(b => [{
+        text: `📖 ${b.title} (${b.urls.length})`,
+        callback_data: `vb_${b.id}`
+      }]);
+    }
+
+    function historyText(chatId) {
+      const binds = loadBindHistory(chatId);
+      if (!binds.length) return '📚 No past collections yet.\n\nUse /bind to create one!';
+      return `📚 *Past Collections* (${binds.length})\n\nTap one to view details:`;
+    }
+
+    bot.command('history', (ctx) => {
+      logInteraction(ctx.chat.id, 'COMMAND', '/history');
+      const keyboard = buildHistoryKeyboard(ctx.chat.id);
+      if (!keyboard) return ctx.reply('📚 No past collections yet.\n\nUse /bind to create one!');
+      ctx.reply(historyText(ctx.chat.id), {
+        parse_mode: 'Markdown',
+        reply_markup: { inline_keyboard: keyboard }
+      });
+    });
+
+    bot.action('show_history', (ctx) => {
+      const chatId = ctx.chat.id;
+      const keyboard = buildHistoryKeyboard(chatId);
+      if (!keyboard) return ctx.editMessageText('📚 No past collections yet.\n\nUse /bind to create one!');
+      ctx.editMessageText(historyText(chatId), {
+        parse_mode: 'Markdown',
+        reply_markup: { inline_keyboard: keyboard }
+      });
+    });
+
+    bot.action(/^vb_(.+)$/, (ctx) => {
+      const bindId = ctx.match[1];
+      const chatId = ctx.chat.id;
+      const binds = loadBindHistory(chatId);
+      const bind = binds.find(b => b.id === bindId);
+      if (!bind) return ctx.answerCbQuery('Collection not found.');
+
+      const date = new Date(bind.sentAt).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+      const urlList = bind.urls.map((u, i) => {
+        let display;
+        try { display = new URL(u).hostname + new URL(u).pathname; } catch { display = u; }
+        if (display.length > 45) display = display.slice(0, 44) + '…';
+        return `${i + 1}. ${display}`;
+      }).join('\n');
+
+      ctx.editMessageText(
+        `📖 *${bind.title}*\n_Sent ${date} · ${bind.urls.length} article${bind.urls.length !== 1 ? 's' : ''}_\n\n${urlList}`,
+        {
+          parse_mode: 'Markdown',
+          reply_markup: {
+            inline_keyboard: [
+              [{ text: '✉️ Resend', callback_data: `rb_${bind.id}` }, { text: '➕ Add Articles', callback_data: `eb_${bind.id}` }],
+              [{ text: '« Back to History', callback_data: 'show_history' }]
+            ]
+          }
+        }
+      );
+    });
+
+    bot.action(/^rb_(.+)$/, async (ctx) => {
+      const bindId = ctx.match[1];
+      const chatId = ctx.chat.id;
+      const binds = loadBindHistory(chatId);
+      const bind = binds.find(b => b.id === bindId);
+      if (!bind) return ctx.answerCbQuery('Collection not found.');
+
+      await ctx.answerCbQuery('Resending…');
+      await ctx.editMessageText(`🚀 Resending "${bind.title}" (${bind.urls.length} articles)…`);
+
+      const allTokens = loadTokens();
+      const userData = allTokens[chatId];
+
+      try {
+        await sendToKindle({
+          urls: bind.urls,
+          title: bind.title,
+          kindleEmail: userData.kindleEmail,
+          chatId: chatId
+        });
+        saveBindToHistory(chatId, { title: bind.title, urls: bind.urls });
+        await ctx.reply(`✅ "${bind.title}" resent to your Kindle!`);
+      } catch (err) {
+        await ctx.reply(`❌ Failed to resend: ${err.message}`);
+      }
+    });
+
+    bot.action(/^eb_(.+)$/, (ctx) => {
+      const bindId = ctx.match[1];
+      const chatId = ctx.chat.id;
+      const binds = loadBindHistory(chatId);
+      const bind = binds.find(b => b.id === bindId);
+      if (!bind) return ctx.answerCbQuery('Collection not found.');
+
+      sessions[chatId] = { state: 'COLLECTING_LINKS', title: bind.title, urls: [...bind.urls] };
+      ctx.editMessageText(
+        `➕ *Extending "${bind.title}"*\n\n${bind.urls.length} article${bind.urls.length !== 1 ? 's' : ''} already loaded. Send more links, then tap Finish.`,
+        {
+          parse_mode: 'Markdown',
+          reply_markup: {
+            inline_keyboard: [
+              [{ text: '✅ Finish & Send', callback_data: 'done_binding' }],
+              [{ text: '❌ Cancel', callback_data: 'cancel_binding' }]
+            ]
+          }
+        }
+      );
     });
 
     bot.on('text', async (ctx) => {
