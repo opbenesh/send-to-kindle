@@ -6,7 +6,7 @@ echo "Starting Deployment..."
 
 # 1. Pull the latest code
 echo "Pulling latest code..."
-git pull origin main
+git pull origin master
 
 # 2. Update Backend
 echo "Updating Backend..."

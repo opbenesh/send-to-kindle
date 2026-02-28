@@ -103,72 +103,68 @@ async function sendToKindle({ url, urls, kindleEmail, smtpSettings, authType, ac
   const finalTitle = manualTitle || (articles.length > 1 ? 'Combined Articles' : mainArticle.title) || 'Untitled Article';
   const finalAuthor = manualAuthor || mainArticle.byline || mainArticle.siteName || (mainArticle.url ? new URL(mainArticle.url).hostname : 'Unknown');
 
-  const coverHtml = `
-    <div style="text-align: center; font-family: 'Georgia', serif; padding: 20px; border: 2px solid #333; height: 90%;">
-      <div style="margin-top: 50px;">
-        <span style="text-transform: uppercase; letter-spacing: 3px; font-size: 0.8em; color: #666;">A Collection by Opbenesh's Send to Kindle</span>
-      </div>
-      
-      <h1 style="font-size: 3em; margin: 40px 0 10px 0; line-height: 1.1;">${finalTitle}</h1>
-      <h2 style="font-size: 1.4em; font-weight: normal; font-style: italic; color: #444; margin-bottom: 50px;">by ${finalAuthor}</h2>
-      
-      <div style="border-top: 1px double #333; border-bottom: 1px double #333; padding: 15px 0; width: 80%; margin: 0 auto;">
-        <p style="margin: 0; font-family: sans-serif; font-size: 0.9em; text-transform: uppercase; letter-spacing: 1px;">
-          Published ${new Date().toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })}
-        </p>
-      </div>
-
-      <div style="text-align: left; margin: 50px auto; width: 85%; font-family: sans-serif;">
-        ${articles.length > 1 ? `
-          <h3 style="font-size: 1em; text-transform: uppercase; border-bottom: 1px solid #eee; padding-bottom: 5px; margin-bottom: 15px;">Inside this volume</h3>
-          <ul style="list-style: none; padding: 0; line-height: 1.6;">
-            ${articles.map((a, i) => `<li style="margin-bottom: 8px; display: flex;"><span style="color: #888; margin-right: 10px;">${(i + 1).toString().padStart(2, '0')}</span> <span>${a.title}</span></li>`).join('')}
-          </ul>
-        ` : `
-          <div style="background: #f9f9f9; padding: 20px; border-left: 5px solid #333; font-style: italic;">
-            ${articles[0].excerpt || 'Captured from the web and formatted for your Kindle.'}
-          </div>
-          <p style="font-size: 0.8em; color: #888; margin-top: 20px; word-break: break-all;">Source: ${articles[0].url}</p>
-        `}
-      </div>
-    </div>
-  `;
-
   const safeTitle = finalTitle.replace(/[^a-z0-9]/gi, '_').toLowerCase();
   const coverBuffer = await generateCoverImage(finalTitle, finalAuthor);
   const coverPath = path.join(__dirname, `${safeTitle}_cover.jpg`);
   fs.writeFileSync(coverPath, coverBuffer);
+
+  const customCss = `
+    body { font-family: "Georgia", serif; }
+    h1.h1 { 
+      text-align: center; 
+      text-transform: uppercase; 
+      font-size: 1.2em; 
+      letter-spacing: 2px; 
+      margin-top: 50px;
+      border-bottom: 1px solid #333;
+      padding-bottom: 10px;
+      width: 90%;
+      margin-left: auto;
+      margin-right: auto;
+    }
+    nav#toc ol { 
+      list-style: none; 
+      padding: 0; 
+      width: 90%; 
+      margin: 20px auto; 
+    }
+    li.table-of-content { 
+      margin-bottom: 12px; 
+      display: block; 
+      font-family: sans-serif;
+      font-size: 0.9em;
+    }
+    li.table-of-content a { 
+      text-decoration: none; 
+      color: #1a1a1a; 
+      display: block;
+    }
+    .toc-author { color: #666; font-size: 0.8em; display: block; margin-top: 2px; }
+  `;
 
   const option = { 
     title: finalTitle, 
     author: finalAuthor,
     publisher: "Opbenesh's Send to Kindle",
     cover: `file://${coverPath}`,
-    tocTitle: 'Contents',
+    css: customCss,
+    tocTitle: "What's Inside", 
     tocInTOC: true,
     numberChaptersInTOC: false,
-    prependChapterTitles: true
+    prependChapterTitles: false
   };
   
-  const chapters = [
-    { 
-      title: 'Cover Page', 
-      content: coverHtml, 
-      excludeFromToc: true,
-      beforeToc: true
-    },
-    ...articles.map(article => ({
-      title: article.title,
-      content: `
-        <div style="font-family: sans-serif; color: #666; font-size: 0.85em; border-bottom: 1px solid #eee; padding-bottom: 10px; margin-bottom: 20px;">
-          ${article.siteName ? `${article.siteName} • ` : ''}${new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}
-        </div>
-        ${article.content}
-      `,
-      author: article.byline || undefined,
-      excludeFromToc: false 
-    }))
-  ];
+  const chapters = articles.map((article, index) => ({
+    title: `${(index + 1).toString().padStart(2, '0')}. ${article.title}`,
+    content: `
+      <div style="font-family: sans-serif; color: #666; font-size: 0.85em; border-bottom: 1px solid #eee; padding-bottom: 10px; margin-bottom: 20px;">
+        ${article.siteName ? `${article.siteName} • ` : ''}${new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}
+      </div>
+      ${article.content}
+    `,
+    author: article.byline || article.siteName || undefined,
+    excludeFromToc: false 
+  }));
   
   const epubBuffer = await epubGenMemory(option, chapters);
   
@@ -226,7 +222,8 @@ async function sendToKindle({ url, urls, kindleEmail, smtpSettings, authType, ac
   throw new Error('No valid authentication provided. Use /login to sign in with Google.');
 }
 
-// --- Express Routes ---
+// --- Express Routes (Disabled for Web UI) ---
+/*
 app.get('/api/extract', async (req, res) => {
   const { url } = req.query;
   if (!url) return res.status(400).json({ error: 'URL is required' });
@@ -259,6 +256,7 @@ app.post('/api/send-to-kindle', async (req, res) => {
     res.status(500).json({ error: error.response?.data?.error?.message || error.message });
   }
 });
+*/
 
 app.get('/auth/google/callback', async (req, res) => {
   const { code, state: chatId } = req.query;
@@ -294,6 +292,23 @@ if (botToken) {
   try {
     bot = new Telegraf(botToken);
     
+    // Register whitelist middleware
+    const whitelistedUsers = (process.env.WHITELISTED_USERS || '').split(',').map(id => id.trim()).filter(id => id);
+    bot.use((ctx, next) => {
+      const chatId = ctx.chat?.id.toString();
+      const userId = ctx.from?.id.toString();
+      
+      if (whitelistedUsers.length > 0 && !whitelistedUsers.includes(chatId) && !whitelistedUsers.includes(userId)) {
+        console.warn(`Unauthorized access attempt from Chat ID: ${chatId}, User ID: ${userId}`);
+        // Only reply if it's a message or command, not actions or others if they're not allowed
+        if (ctx.updateType === 'message') {
+          return ctx.reply("⛔ Sorry, you're not authorized to use this bot.");
+        }
+        return;
+      }
+      return next();
+    });
+
     // Register commands for the "Menu" button
     bot.telegram.setMyCommands([
       { command: 'start', description: 'Show welcome message' },
