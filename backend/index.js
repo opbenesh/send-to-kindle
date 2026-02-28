@@ -337,42 +337,6 @@ async function sendToKindle({ url, urls, kindleEmail, smtpSettings, authType, ac
   throw new Error('No valid authentication provided. Use /login to sign in with Google.');
 }
 
-// --- Express Routes (Disabled for Web UI) ---
-/*
-app.get('/api/extract', async (req, res) => {
-  const { url } = req.query;
-  if (!url) return res.status(400).json({ error: 'URL is required' });
-
-  try {
-    const response = await axios.get(url);
-    const dom = new JSDOM(response.data, { url });
-    const reader = new Readability(dom.window.document);
-    const article = reader.parse();
-
-    if (!article) return res.status(404).json({ error: 'Could not extract content' });
-
-    res.json({
-      title: article.title,
-      author: article.byline,
-      excerpt: article.excerpt,
-      siteName: article.siteName
-    });
-  } catch (error) {
-    res.status(500).json({ error: error.message });
-  }
-});
-
-app.post('/api/send-to-kindle', async (req, res) => {
-  try {
-    await sendToKindle(req.body);
-    res.json({ success: true });
-  } catch (error) {
-    console.error('API Error:', error.response?.data || error.message);
-    res.status(500).json({ error: error.response?.data?.error?.message || error.message });
-  }
-});
-*/
-
 app.get('/auth/google/callback', async (req, res) => {
   const { code, state: chatId } = req.query;
   console.log('Received OAuth callback for chatId:', chatId);
