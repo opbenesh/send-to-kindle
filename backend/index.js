@@ -16,6 +16,13 @@ const TOKEN_PATH = path.join(__dirname, 'tokens.json');
 const BINDS_PATH = path.join(__dirname, 'binds.json');
 const WHITELIST_PATH = path.join(__dirname, 'whitelist.json');
 const sessions = {};
+const SESSION_TTL_MS = 60 * 60 * 1000; // 1 hour
+setInterval(() => {
+  const now = Date.now();
+  for (const id of Object.keys(sessions)) {
+    if (now - sessions[id].createdAt > SESSION_TTL_MS) delete sessions[id];
+  }
+}, 10 * 60 * 1000).unref();
 
 // --- SMTP Setup ---
 const transporter = nodemailer.createTransport({
@@ -24,6 +31,8 @@ const transporter = nodemailer.createTransport({
   secure: Number(process.env.SMTP_PORT) === 465,
   auth: { user: process.env.SMTP_USER, pass: process.env.SMTP_PASS },
 });
+
+transporter.verify().then(() => console.log('SMTP connection verified.')).catch(err => console.error('SMTP connection failed:', err.message));
 
 // Helper to load/save tokens (used for kindleEmail storage)
 function loadTokens() {
@@ -93,7 +102,13 @@ function validateUrl(urlString) {
 function logInteraction(chatId, type, content) {
   const timestamp = new Date().toISOString();
   const logEntry = `[${timestamp}] Chat: ${chatId} | ${type}: ${content}\n`;
-  fs.appendFileSync(path.join(__dirname, 'interactions.log'), logEntry);
+  const logPath = path.join(__dirname, 'interactions.log');
+  try {
+    if (fs.existsSync(logPath) && fs.statSync(logPath).size > 5 * 1024 * 1024) {
+      fs.renameSync(logPath, logPath + '.old');
+    }
+  } catch (e) {}
+  fs.appendFileSync(logPath, logEntry);
 }
 
 async function fetchArticle(url) {
@@ -400,7 +415,7 @@ if (botToken) {
     });
 
     bot.action('setup_email', (ctx) => {
-      sessions[ctx.chat.id] = { state: 'AWAITING_EMAIL' };
+      sessions[ctx.chat.id] = { state: 'AWAITING_EMAIL', createdAt: Date.now() };
       ctx.reply('Please type your Kindle email address (e.g. yourname@kindle.com):');
     });
     bot.action('check_status', (ctx) => {
@@ -451,7 +466,17 @@ if (botToken) {
 
     bot.command('bind', (ctx) => {
       logInteraction(ctx.chat.id, 'COMMAND', '/bind');
-      sessions[ctx.chat.id] = { state: 'AWAITING_TITLE', urls: [] };
+      if (sessions[ctx.chat.id]) {
+        return ctx.reply('You already have an active session. Finish it or cancel it first.', {
+          reply_markup: {
+            inline_keyboard: [
+              [{ text: '✅ Finish & Send', callback_data: 'done_binding' }],
+              [{ text: '❌ Cancel', callback_data: 'cancel_binding' }]
+            ]
+          }
+        });
+      }
+      sessions[ctx.chat.id] = { state: 'AWAITING_TITLE', urls: [], createdAt: Date.now() };
       ctx.reply('📚 Binding mode activated! Please send me the TITLE for this collection.');
     });
 
@@ -625,7 +650,7 @@ if (botToken) {
       const bind = binds.find(b => b.id === bindId);
       if (!bind) return ctx.answerCbQuery('Collection not found.');
 
-      sessions[chatId] = { state: 'COLLECTING_LINKS', title: bind.title, urls: [...bind.urls] };
+      sessions[chatId] = { state: 'COLLECTING_LINKS', title: bind.title, urls: [...bind.urls], createdAt: Date.now() };
       ctx.editMessageText(
         `➕ *Extending "${bind.title}"*\n\n${bind.urls.length} article${bind.urls.length !== 1 ? 's' : ''} already loaded. Send more links, then tap Finish.`,
         {
@@ -671,7 +696,7 @@ if (botToken) {
       const match = text.match(urlRegex);
 
       if (match) {
-        const url = match[0];
+        const url = match[0].replace(/[.,;:!?)"']+$/, '');
 
         if (session && session.state === 'COLLECTING_LINKS') {
           if (session.urls.length >= 20) {
@@ -738,3 +763,11 @@ process.on('uncaughtException', (err) => {
 process.on('unhandledRejection', (reason, promise) => {
   console.error('UNHANDLED REJECTION at:', promise, 'reason:', reason);
 });
+
+function shutdown(signal) {
+  console.log(`${signal} received, shutting down gracefully...`);
+  if (bot) bot.stop(signal);
+  process.exit(0);
+}
+process.on('SIGTERM', () => shutdown('SIGTERM'));
+process.on('SIGINT', () => shutdown('SIGINT'));

@@ -5,6 +5,22 @@ function wrapText(ctx, text, maxWidth) {
   const lines = [];
   let current = '';
   for (const word of words) {
+    // Word alone exceeds maxWidth — break character by character
+    if (ctx.measureText(word).width > maxWidth) {
+      if (current) { lines.push(current); current = ''; }
+      let part = '';
+      for (const char of word) {
+        const test = part + char;
+        if (ctx.measureText(test).width > maxWidth) {
+          if (part) lines.push(part);
+          part = char;
+        } else {
+          part = test;
+        }
+      }
+      current = part;
+      continue;
+    }
     const test = current ? `${current} ${word}` : word;
     if (ctx.measureText(test).width > maxWidth && current) {
       lines.push(current);

@@ -20,6 +20,16 @@ else
   echo "Starting Backend..."
   pm2 start index.js --name send-to-kindle-backend
 fi
+
+echo "Verifying backend is online..."
+sleep 3
+if pm2 show send-to-kindle-backend | grep -q "online"; then
+  echo "Backend is online."
+else
+  echo "ERROR: Backend did not come up correctly!"
+  pm2 logs send-to-kindle-backend --lines 30 --nostream
+  exit 1
+fi
 cd ..
 
 echo "Deployment Complete!"
