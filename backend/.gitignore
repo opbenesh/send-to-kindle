@@ -1,5 +1,9 @@
+.env
 cert.pem
 key.pem
 tokens.json
+whitelist.json
+binds.json
+interactions.log
 test-require.js
 *.epub

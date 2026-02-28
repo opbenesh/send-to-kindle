@@ -15,6 +15,7 @@
 ## Commands
 - Run backend: `cd backend && node index.js`
 - PM2 process name: `send-to-kindle-backend`
+- PM2 is installed under nvm; Bash tool doesn't source `.bashrc`, so use full path: `~/.nvm/versions/node/v20.20.0/bin/pm2`
 - Deploy: `./deploy.sh` (pulls master, npm install, pm2 reload, builds frontend)
 
 ## Git
