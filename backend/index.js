@@ -56,7 +56,9 @@ function saveToken(chatId, tokens) {
 function logInteraction(chatId, type, content) {
   const timestamp = new Date().toISOString();
   const logEntry = `[${timestamp}] Chat: ${chatId} | ${type}: ${content}\n`;
-  fs.appendFileSync(path.join(__dirname, 'interactions.log'), logEntry);
+  fs.appendFile(path.join(__dirname, 'interactions.log'), logEntry, (err) => {
+    if (err) console.error('Error writing to interactions.log:', err);
+  });
 }
 
 async function fetchArticle(url) {
