@@ -418,34 +418,23 @@ if (botToken) {
       sessions[ctx.chat.id] = { state: 'AWAITING_EMAIL', createdAt: Date.now() };
       ctx.reply('Please type your Kindle email address (e.g. yourname@kindle.com):');
     });
-    bot.action('check_status', (ctx) => {
-      const userData = loadTokens()[ctx.chat.id];
-      let statusMsg = '*Current Status:*\n';
-      if (userData?.kindleEmail) {
-        statusMsg += `✅ Kindle Email: \`${userData.kindleEmail}\``;
-      } else {
-        statusMsg += '❌ Kindle email not set. Use /setemail to configure it.';
-      }
-      ctx.reply(statusMsg, { parse_mode: 'Markdown' });
-    });
-    bot.action('show_help', (ctx) => {
-      ctx.reply('Commands:\n/bind - Start a multi-article collection\n/history - View and resend past collections\n/status - Check settings\n/setemail - Set Kindle email\n\nSimply send me any link to send it instantly!');
-    });
+    function statusText(chatId) {
+      const userData = loadTokens()[chatId];
+      if (userData?.kindleEmail) return `*Status:*\n✅ Kindle Email: \`${userData.kindleEmail}\``;
+      return '*Status:*\n❌ No Kindle email set. Use /setemail yourname@kindle.com';
+    }
 
-    bot.help((ctx) => {
-      ctx.reply('Commands:\n/setemail <email> - Set your Kindle email\n/status - Check your settings\n/bind - Start a multi-article session\n/done - Finish binding and send\n/cancel - Cancel binding session\n/help - Show this message');
+    bot.action('check_status', (ctx) => {
+      ctx.reply(statusText(ctx.chat.id), { parse_mode: 'Markdown' });
     });
+    const HELP_TEXT = 'Commands:\n/setemail <email> — Set your Kindle email\n/bind — Start a multi-article collection\n/done — Finish and send collection\n/cancel — Cancel active session\n/history — View and resend past collections\n/status — Check your settings\n\nOr just send any link to send it instantly!';
+
+    bot.action('show_help', (ctx) => { ctx.reply(HELP_TEXT); });
+    bot.help((ctx) => { ctx.reply(HELP_TEXT); });
 
     bot.command('status', (ctx) => {
       logInteraction(ctx.chat.id, 'COMMAND', '/status');
-      const userData = loadTokens()[ctx.chat.id];
-      let statusMsg = 'Bot is running.\n';
-      if (userData?.kindleEmail) {
-        statusMsg += `✅ Kindle Email: ${userData.kindleEmail}`;
-      } else {
-        statusMsg += '❌ No Kindle email set. Use /setemail yourname@kindle.com';
-      }
-      ctx.reply(statusMsg);
+      ctx.reply(statusText(ctx.chat.id), { parse_mode: 'Markdown' });
     });
 
     bot.command('debug_session', (ctx) => {
@@ -723,7 +712,7 @@ if (botToken) {
         const userData = loadTokens()[ctx.chat.id];
 
         if (!userData?.kindleEmail) {
-          return ctx.reply('Please set your Kindle email first using /setemail yourname@kindle.com');
+          return ctx.reply('❌ Please set your Kindle email first: /setemail yourname@kindle.com');
         }
 
         ctx.reply('Processing article...');
