@@ -113,6 +113,9 @@ function logInteraction(chatId, type, content) {
 
 async function fetchArticle(url) {
   const response = await axios.get(url, { timeout: 15000, maxContentLength: 10 * 1024 * 1024 });
+  // Validate final URL after redirects to prevent SSRF via redirect chains
+  const finalUrl = response.request?.res?.responseUrl;
+  if (finalUrl && finalUrl !== url) validateUrl(finalUrl);
   const dom = new JSDOM(response.data, { url });
   const reader = new Readability(dom.window.document);
   const article = reader.parse();
@@ -207,10 +210,16 @@ async function sendToKindle({ url, urls, kindleEmail, title: manualTitle, author
   const targetUrls = urls || [url];
   const articles = [];
 
+  const failedUrls = [];
   for (const targetUrl of targetUrls) {
-    validateUrl(targetUrl);
-    const article = await fetchArticle(targetUrl);
-    if (article) articles.push(article);
+    try {
+      validateUrl(targetUrl);
+      const article = await fetchArticle(targetUrl);
+      if (article) articles.push(article);
+      else failedUrls.push(targetUrl);
+    } catch (e) {
+      failedUrls.push(targetUrl);
+    }
   }
 
   if (articles.length === 0) throw new Error('Could not extract content from any URL.');
@@ -299,6 +308,11 @@ async function sendToKindle({ url, urls, kindleEmail, title: manualTitle, author
 
   try { fs.unlinkSync(coverPath); } catch (e) {}
 
+  const EPUB_MAX_BYTES = 10 * 1024 * 1024;
+  if (epubBuffer.length > EPUB_MAX_BYTES) {
+    throw new Error(`EPUB is too large (${(epubBuffer.length / 1024 / 1024).toFixed(1)} MB). Try fewer or shorter articles.`);
+  }
+
   const emailSubject = articles.length === 1 ? `Article: ${mainArticle.title}` : `Bundle: ${finalTitle}`;
 
   await transporter.sendMail({
@@ -308,7 +322,7 @@ async function sendToKindle({ url, urls, kindleEmail, title: manualTitle, author
     text: 'Here is your article.',
     attachments: [{ filename: `${safeTitle}.epub`, content: Buffer.from(epubBuffer) }],
   });
-  return true;
+  return { failedUrls };
 }
 
 // --- Telegram Bot ---
@@ -342,6 +356,13 @@ if (botToken) {
     const isAdmin = (userId) => userId?.toString() === adminId;
 
     const unauthorizedAttempts = {};
+    // Clean up silenced entries daily to prevent unbounded growth
+    setInterval(() => {
+      for (const key of Object.keys(unauthorizedAttempts)) {
+        if (unauthorizedAttempts[key] > 3) delete unauthorizedAttempts[key];
+      }
+    }, 24 * 60 * 60 * 1000).unref();
+
     bot.use((ctx, next) => {
       const chatId = ctx.chat?.id.toString();
       const userId = ctx.from?.id.toString();
@@ -363,9 +384,12 @@ if (botToken) {
     bot.telegram.setMyCommands([
       { command: 'start', description: 'Show welcome message' },
       { command: 'bind', description: 'Start a multi-article collection' },
+      { command: 'done', description: 'Finish and send current collection' },
+      { command: 'cancel', description: 'Cancel active session' },
       { command: 'history', description: 'View and resend past collections' },
       { command: 'status', description: 'Check your settings' },
       { command: 'setemail', description: 'Set Kindle email' },
+      { command: 'unsetemail', description: 'Clear Kindle email' },
       { command: 'help', description: 'Show help' }
     ]);
 
@@ -427,7 +451,7 @@ if (botToken) {
     bot.action('check_status', (ctx) => {
       ctx.reply(statusText(ctx.chat.id), { parse_mode: 'Markdown' });
     });
-    const HELP_TEXT = 'Commands:\n/setemail <email> — Set your Kindle email\n/bind — Start a multi-article collection\n/done — Finish and send collection\n/cancel — Cancel active session\n/history — View and resend past collections\n/status — Check your settings\n\nOr just send any link to send it instantly!';
+    const HELP_TEXT = 'Commands:\n/setemail <email> — Set your Kindle email\n/unsetemail — Clear your Kindle email\n/bind — Start a multi-article collection\n/done — Finish and send collection\n/cancel — Cancel active session\n/history — View and resend past collections\n/status — Check your settings\n\nOr just send any link to send it instantly!';
 
     bot.action('show_help', (ctx) => { ctx.reply(HELP_TEXT); });
     bot.help((ctx) => { ctx.reply(HELP_TEXT); });
@@ -440,6 +464,16 @@ if (botToken) {
     bot.command('debug_session', (ctx) => {
       if (!isAdmin(ctx.from?.id)) return ctx.reply('⛔ Admin only.');
       ctx.reply(`Current Session: ${JSON.stringify(sessions[ctx.chat.id] || 'None')}`);
+    });
+
+    bot.command('unsetemail', (ctx) => {
+      logInteraction(ctx.chat.id, 'COMMAND', '/unsetemail');
+      const allTokens = loadTokens();
+      const chatId = String(ctx.chat.id);
+      if (!allTokens[chatId]?.kindleEmail) return ctx.reply('No Kindle email is currently set.');
+      delete allTokens[chatId].kindleEmail;
+      fs.writeFileSync(TOKEN_PATH, JSON.stringify(allTokens, null, 2));
+      ctx.reply('✅ Kindle email cleared.');
     });
 
     bot.command('setemail', (ctx) => {
@@ -483,13 +517,14 @@ if (botToken) {
       await ctx.editMessageText(`🚀 Processing ${session.urls.length} articles for "${session.title}"...`);
 
       try {
-        await sendToKindle({
+        const { failedUrls } = await sendToKindle({
           urls: session.urls,
           title: session.title,
           kindleEmail: userData.kindleEmail,
         });
         saveBindToHistory(chatId, { title: session.title, urls: session.urls });
-        await ctx.reply('✅ Collection sent to your Kindle!');
+        await ctx.reply('✅ Collection sent to your Kindle!' +
+          (failedUrls.length ? `\n⚠️ ${failedUrls.length} URL(s) could not be fetched and were skipped.` : ''));
         delete sessions[chatId];
       } catch (err) {
         console.error('done_binding error:', err);
@@ -510,13 +545,14 @@ if (botToken) {
       ctx.reply(`🚀 Processing ${session.urls.length} articles for "${session.title}"...`);
 
       try {
-        await sendToKindle({
+        const { failedUrls } = await sendToKindle({
           urls: session.urls,
           title: session.title,
           kindleEmail: userData.kindleEmail,
         });
         saveBindToHistory(chatId, { title: session.title, urls: session.urls });
-        ctx.reply('✅ Collection sent to your Kindle!');
+        ctx.reply('✅ Collection sent to your Kindle!' +
+          (failedUrls.length ? `\n⚠️ ${failedUrls.length} URL(s) could not be fetched and were skipped.` : ''));
         delete sessions[chatId];
       } catch (err) {
         console.error('/done error:', err);
@@ -619,13 +655,14 @@ if (botToken) {
       await ctx.editMessageText(`🚀 Resending "${bind.title}" (${bind.urls.length} articles)…`);
 
       try {
-        await sendToKindle({
+        const { failedUrls } = await sendToKindle({
           urls: bind.urls,
           title: bind.title,
           kindleEmail: userData.kindleEmail,
         });
         saveBindToHistory(chatId, { title: bind.title, urls: bind.urls });
-        await ctx.reply(`✅ "${bind.title}" resent to your Kindle!`);
+        await ctx.reply(`✅ "${bind.title}" resent to your Kindle!` +
+          (failedUrls.length ? `\n⚠️ ${failedUrls.length} URL(s) could not be fetched and were skipped.` : ''));
       } catch (err) {
         console.error('resend error:', err);
         await ctx.reply('❌ Failed to resend. Please try again.');
