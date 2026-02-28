@@ -24,6 +24,10 @@ if (dotenvResult.parsed) {
 }
 
 const app = express();
+app.use((req, res, next) => {
+  if (/\/\.git(\/|$)/.test(req.path)) return res.status(404).end();
+  next();
+});
 app.use(cors());
 app.use(express.json());
 

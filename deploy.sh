@@ -22,14 +22,17 @@ else
 fi
 cd ..
 
-# 3. Update Frontend
+# 3. Build Frontend and publish artifacts outside the git repo
+# This prevents .git directory exposure if the web root is ever served statically.
+FRONTEND_WEB_ROOT="/var/www/send-to-kindle"
 echo "Updating Frontend..."
 cd frontend
 npm install
 npm run build
-# Serve frontend if needed, otherwise rely on your existing web server
-# If you need PM2 to serve the frontend:
-# pm2 serve dist 5173 --name send-to-kindle-frontend --spa || pm2 reload send-to-kindle-frontend
+# Copy only the built artifacts — never serve directly from the git working tree
+sudo mkdir -p "$FRONTEND_WEB_ROOT"
+sudo rsync -a --delete dist/ "$FRONTEND_WEB_ROOT/"
 cd ..
+echo "Frontend artifacts deployed to $FRONTEND_WEB_ROOT"
 
 echo "Deployment Complete!"
