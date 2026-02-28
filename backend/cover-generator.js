@@ -1,5 +1,21 @@
-const { createCanvas, registerFont } = require('canvas');
-const path = require('path');
+const { createCanvas } = require('canvas');
+
+function wrapText(ctx, text, maxWidth) {
+  const words = text.split(' ');
+  const lines = [];
+  let current = '';
+  for (const word of words) {
+    const test = current ? `${current} ${word}` : word;
+    if (ctx.measureText(test).width > maxWidth && current) {
+      lines.push(current);
+      current = word;
+    } else {
+      current = test;
+    }
+  }
+  if (current) lines.push(current);
+  return lines;
+}
 
 async function generateCoverImage(title, author) {
   const width = 1200;
@@ -7,63 +23,66 @@ async function generateCoverImage(title, author) {
   const canvas = createCanvas(width, height);
   const ctx = canvas.getContext('2d');
 
-  // Background - Soft Cream/Paper color
+  // Background — soft cream/paper
   ctx.fillStyle = '#faf9f6';
   ctx.fillRect(0, 0, width, height);
 
-  // Decorative Border
+  // Decorative border: thin outer, thick inner
   ctx.strokeStyle = '#2c2c2c';
   ctx.lineWidth = 2;
   ctx.strokeRect(40, 40, width - 80, height - 80);
-  
   ctx.lineWidth = 8;
   ctx.strokeRect(60, 60, width - 120, height - 120);
 
-  // Text
   ctx.fillStyle = '#1a1a1a';
   ctx.textAlign = 'center';
 
   // Header branding
   ctx.font = 'bold 24px Arial';
-  ctx.fillText("OPBENESH'S READER", width/2, 150);
+  ctx.fillStyle = '#555';
+  ctx.fillText("OPBENESH'S READER", width / 2, 150);
+  ctx.fillStyle = '#1a1a1a';
 
-  // Title
-  ctx.font = 'bold 90px Georgia, serif';
-  const words = title.split(' ');
-  let line = '';
-  let y = 450;
-  const maxWidth = 950;
-  
-  for(let n = 0; n < words.length; n++) {
-    let testLine = line + words[n] + ' ';
-    let metrics = ctx.measureText(testLine);
-    if (metrics.width > maxWidth && n > 0) {
-      ctx.fillText(line, width/2, y);
-      line = words[n] + ' ';
-      y += 110;
-    } else {
-      line = testLine;
-    }
+  // Title — pick font size based on character count so long titles stay readable
+  const titleMaxWidth = 950;
+  const titleFontSize = title.length > 60 ? 60 : title.length > 40 ? 72 : 90;
+  ctx.font = `bold ${titleFontSize}px Georgia`;
+  const titleLines = wrapText(ctx, title, titleMaxWidth);
+  const lineHeight = titleFontSize * 1.28;
+
+  // Vertically centre the title block around y=500
+  let titleY = 500 - ((titleLines.length - 1) * lineHeight) / 2;
+  for (const line of titleLines) {
+    ctx.fillText(line, width / 2, titleY);
+    titleY += lineHeight;
   }
-  ctx.fillText(line, width/2, y);
+  const afterTitle = titleY - lineHeight + titleFontSize * 0.25;
 
   // Divider line
   ctx.beginPath();
-  ctx.moveTo(width/2 - 150, y + 100);
-  ctx.lineTo(width/2 + 150, y + 100);
-  ctx.lineWidth = 3;
+  ctx.moveTo(width / 2 - 160, afterTitle + 60);
+  ctx.lineTo(width / 2 + 160, afterTitle + 60);
+  ctx.lineWidth = 2;
   ctx.stroke();
 
-  // Author
-  ctx.font = 'italic 55px Georgia, serif';
-  ctx.fillText(author, width/2, y + 250);
+  // Author — wrap if needed, truncate if extremely long
+  const authorMaxWidth = 900;
+  ctx.font = 'italic 52px Georgia';
+  ctx.fillStyle = '#333';
+  const authorDisplay = author.length > 70 ? author.substring(0, 67) + '…' : author;
+  const authorLines = wrapText(ctx, authorDisplay, authorMaxWidth);
+  let authorY = afterTitle + 140;
+  for (const line of authorLines) {
+    ctx.fillText(line, width / 2, authorY);
+    authorY += 65;
+  }
 
-  // Bottom Branding
-  ctx.font = 'bold 28px "Arial Narrow", sans-serif';
-  ctx.letterSpacing = "4px";
-  ctx.fillText("A COLLECTION BY OPBENESH'S SEND TO KINDLE", width/2, height - 120);
+  // Bottom branding
+  ctx.font = 'bold 22px Arial';
+  ctx.fillStyle = '#555';
+  ctx.fillText('SEND TO KINDLE', width / 2, height - 110);
 
-  return canvas.toBuffer('image/jpeg');
+  return canvas.toBuffer('image/jpeg', { quality: 0.92 });
 }
 
 module.exports = { generateCoverImage };

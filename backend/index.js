@@ -67,6 +67,59 @@ async function fetchArticle(url) {
   return article ? { ...article, url } : null;
 }
 
+// --- EPUB Helpers ---
+function cleanArticleContent(htmlContent, articleUrl) {
+  const { window } = new JSDOM(`<div id="root">${htmlContent}</div>`);
+  const doc = window.document;
+  const container = doc.getElementById('root');
+
+  // Fix lazy-loaded images
+  container.querySelectorAll('img').forEach(img => {
+    const lazyAttrs = ['data-src', 'data-lazy-src', 'data-original', 'data-lazy', 'data-url', 'data-hi-res-src'];
+    for (const attr of lazyAttrs) {
+      const val = img.getAttribute(attr);
+      if (val && val.startsWith('http')) { img.src = val; break; }
+    }
+
+    // Fall back to first srcset URL if src is missing/broken
+    if (img.hasAttribute('srcset') && (!img.src || img.src.startsWith('data:'))) {
+      const firstSrc = img.getAttribute('srcset').split(',')[0].trim().split(' ')[0];
+      if (firstSrc.startsWith('http')) img.src = firstSrc;
+    }
+
+    // Resolve relative URLs
+    const src = img.getAttribute('src') || '';
+    if (src && !src.startsWith('http') && !src.startsWith('data:')) {
+      try { img.src = new URL(src, articleUrl).href; } catch (e) {}
+    }
+
+    // Remove broken placeholder images (empty src, anchors, tiny SVG/GIF spinners)
+    const finalSrc = img.getAttribute('src') || '';
+    const isBroken = !finalSrc || finalSrc === '#'
+      || finalSrc.startsWith('data:image/svg')
+      || /data:image\/gif;base64,R0lGOD/.test(finalSrc);
+    if (isBroken) {
+      const parent = img.parentElement;
+      img.remove();
+      if (parent && ['FIGURE', 'P', 'DIV'].includes(parent.tagName) && !parent.innerHTML.trim()) {
+        parent.remove();
+      }
+      return;
+    }
+
+    img.removeAttribute('width');
+    img.removeAttribute('height');
+    img.removeAttribute('srcset');
+    img.removeAttribute('sizes');
+    if (!img.getAttribute('alt')) img.setAttribute('alt', '');
+  });
+
+  // Remove noscript (often contain duplicate img tags), scripts, and stray styles
+  container.querySelectorAll('noscript, script, style').forEach(el => el.remove());
+
+  return container.innerHTML;
+}
+
 // --- Core Logic ---
 async function sendToKindle({ url, urls, kindleEmail, smtpSettings, authType, accessToken, userEmail, chatId, title: manualTitle, author: manualAuthor }) {
   // If we have a chatId and no token, try to load stored token
@@ -109,62 +162,75 @@ async function sendToKindle({ url, urls, kindleEmail, smtpSettings, authType, ac
   fs.writeFileSync(coverPath, coverBuffer);
 
   const customCss = `
-    body { font-family: "Georgia", serif; }
-    h1.h1 { 
-      text-align: center; 
-      text-transform: uppercase; 
-      font-size: 1.2em; 
-      letter-spacing: 2px; 
-      margin-top: 50px;
-      border-bottom: 1px solid #333;
-      padding-bottom: 10px;
-      width: 90%;
-      margin-left: auto;
-      margin-right: auto;
-    }
-    nav#toc ol { 
-      list-style: none; 
-      padding: 0; 
-      width: 90%; 
-      margin: 20px auto; 
-    }
-    li.table-of-content { 
-      margin-bottom: 12px; 
-      display: block; 
-      font-family: sans-serif;
-      font-size: 0.9em;
-    }
-    li.table-of-content a { 
-      text-decoration: none; 
-      color: #1a1a1a; 
-      display: block;
-    }
+    body { font-family: Georgia, "Times New Roman", serif; font-size: 1em; line-height: 1.7; color: #1a1a1a; margin: 0; padding: 0; }
+    p { margin: 0 0 1em 0; orphans: 2; widows: 2; }
+    h1, h2, h3, h4, h5, h6 { font-family: Georgia, serif; line-height: 1.3; margin: 1.5em 0 0.6em 0; font-weight: bold; }
+    h1 { font-size: 1.6em; } h2 { font-size: 1.3em; } h3 { font-size: 1.1em; } h4, h5, h6 { font-size: 1em; }
+    a { color: #1a1a1a; text-decoration: underline; }
+    blockquote { border-left: 3px solid #999; margin: 1.2em 0; padding: 0.4em 1em; color: #444; font-style: italic; }
+    img { max-width: 100%; height: auto; display: block; margin: 1em auto; }
+    figure { margin: 1.5em 0; text-align: center; }
+    figcaption { font-size: 0.85em; color: #666; font-style: italic; margin-top: 0.4em; }
+    pre, code { font-family: "Courier New", Courier, monospace; font-size: 0.85em; }
+    pre { background: #f5f5f5; padding: 0.8em 1em; white-space: pre-wrap; word-wrap: break-word; border-left: 3px solid #ccc; margin: 1em 0; }
+    code { background: #f0f0f0; padding: 0.1em 0.3em; }
+    pre code { background: none; padding: 0; }
+    table { border-collapse: collapse; width: 100%; font-size: 0.9em; margin: 1.2em 0; }
+    th, td { border: 1px solid #ccc; padding: 0.4em 0.6em; text-align: left; }
+    th { background: #f5f5f5; font-weight: bold; }
+    ul, ol { margin: 0.8em 0; padding-left: 1.8em; }
+    li { margin-bottom: 0.3em; }
+    .article-meta { font-family: Arial, Helvetica, sans-serif; font-size: 0.85em; color: #666; border-bottom: 1px solid #ddd; padding-bottom: 12px; margin-bottom: 20px; }
+    .article-source { font-weight: bold; color: #444; }
+    .article-byline { font-style: italic; margin-top: 3px; }
+    .article-excerpt { font-size: 1.05em; color: #333; font-style: italic; line-height: 1.6; margin: 0 0 1.5em 0; padding-bottom: 1em; border-bottom: 1px solid #eee; }
+    h1.h1 { text-align: center; text-transform: uppercase; font-size: 1.2em; letter-spacing: 2px; margin-top: 50px; border-bottom: 1px solid #333; padding-bottom: 10px; width: 90%; margin-left: auto; margin-right: auto; }
+    nav#toc ol { list-style: none; padding: 0; width: 90%; margin: 20px auto; }
+    li.table-of-content { margin-bottom: 12px; display: block; font-family: Arial, sans-serif; font-size: 0.9em; }
+    li.table-of-content a { text-decoration: none; color: #1a1a1a; display: block; }
     .toc-author { color: #666; font-size: 0.8em; display: block; margin-top: 2px; }
   `;
 
-  const option = { 
-    title: finalTitle, 
+  const option = {
+    title: finalTitle,
     author: finalAuthor,
-    publisher: "Opbenesh's Send to Kindle",
+    publisher: "Send to Kindle",
     cover: `file://${coverPath}`,
     css: customCss,
-    tocTitle: "What's Inside", 
+    lang: 'en',
+    description: articles[0].excerpt || '',
+    tocTitle: articles.length > 1 ? "What's Inside" : 'Contents',
     tocInTOC: true,
     numberChaptersInTOC: false,
-    prependChapterTitles: false
+    prependChapterTitles: articles.length > 1
   };
-  
-  const chapters = articles.map((article, index) => ({
-    title: `${(index + 1).toString().padStart(2, '0')}. ${article.title}`,
-    content: `
-      <div style="font-family: sans-serif; color: #666; font-size: 0.85em; border-bottom: 1px solid #eee; padding-bottom: 10px; margin-bottom: 20px;">
-        ${article.siteName ? `${article.siteName} • ` : ''}${new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}
-      </div>
-      ${article.content}
-    `,
-    author: article.byline || article.siteName || undefined,
-    excludeFromToc: false 
-  }));
+
+  const isMulti = articles.length > 1;
+  const chapters = articles.map((article, index) => {
+    const chapterTitle = isMulti
+      ? `${(index + 1).toString().padStart(2, '0')}. ${article.title}`
+      : article.title;
+
+    const source = article.siteName || (article.url ? new URL(article.url).hostname : '');
+    const datePart = new Date().toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' });
+    const metaLine = [source, datePart].filter(Boolean).join(' · ');
+    const bylinePart = article.byline ? `<div class="article-byline">By ${article.byline}</div>` : '';
+    const excerptPart = article.excerpt ? `<p class="article-excerpt">${article.excerpt}</p>` : '';
+
+    return {
+      title: chapterTitle,
+      content: `
+        <div class="article-meta">
+          <span class="article-source">${metaLine}</span>
+          ${bylinePart}
+        </div>
+        ${excerptPart}
+        ${cleanArticleContent(article.content, article.url)}
+      `,
+      author: article.byline || article.siteName || undefined,
+      excludeFromToc: false
+    };
+  });
   
   const epubBuffer = await epubGenMemory(option, chapters);
   
