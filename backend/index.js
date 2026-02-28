@@ -92,24 +92,54 @@ function cleanArticleContent(htmlContent, articleUrl) {
   const doc = window.document;
   const container = doc.getElementById('root');
 
+  // Helper: resolve a URL (absolute, protocol-relative, or relative) against the article base
+  function resolveUrl(val, base) {
+    if (!val || val.startsWith('data:')) return null;
+    if (val.startsWith('//')) val = 'https:' + val;
+    if (val.startsWith('http')) return val;
+    try { return new URL(val, base).href; } catch (e) { return null; }
+  }
+
+  // Helper: if URL is a Next.js /_next/image proxy, extract the real image URL
+  function unwrapNextImage(url) {
+    if (!url || !url.includes('/_next/image')) return url;
+    try {
+      const u = new URL(url);
+      const inner = u.searchParams.get('url');
+      return inner ? decodeURIComponent(inner) : url;
+    } catch (e) { return url; }
+  }
+
   // Fix lazy-loaded images
   container.querySelectorAll('img').forEach(img => {
-    const lazyAttrs = ['data-src', 'data-lazy-src', 'data-original', 'data-lazy', 'data-url', 'data-hi-res-src'];
+    const lazyAttrs = ['data-src', 'data-lazy-src', 'data-original', 'data-lazy', 'data-url', 'data-hi-res-src', 'data-original-src', 'data-image-src'];
     for (const attr of lazyAttrs) {
-      const val = img.getAttribute(attr);
-      if (val && val.startsWith('http')) { img.src = val; break; }
+      const resolved = resolveUrl(img.getAttribute(attr), articleUrl);
+      if (resolved) { img.src = resolved; break; }
     }
 
-    // Fall back to first srcset URL if src is missing/broken
-    if (img.hasAttribute('srcset') && (!img.src || img.src.startsWith('data:'))) {
-      const firstSrc = img.getAttribute('srcset').split(',')[0].trim().split(' ')[0];
-      if (firstSrc.startsWith('http')) img.src = firstSrc;
+    // Fall back to srcset (or data-srcset) if src is missing/broken — handles relative paths too
+    if (!img.src || img.src.startsWith('data:')) {
+      const srcset = img.getAttribute('srcset') || img.getAttribute('data-srcset') || '';
+      if (srcset) {
+        const firstSrc = srcset.split(',')[0].trim().split(' ')[0];
+        const resolved = resolveUrl(firstSrc, articleUrl);
+        if (resolved) img.src = resolved;
+      }
     }
 
-    // Resolve relative URLs
+    // Resolve relative URLs (including /_next/image paths)
     const src = img.getAttribute('src') || '';
-    if (src && !src.startsWith('http') && !src.startsWith('data:')) {
-      try { img.src = new URL(src, articleUrl).href; } catch (e) {}
+    if (src && !src.startsWith('data:')) {
+      const resolved = resolveUrl(src, articleUrl);
+      if (resolved) img.src = resolved;
+    }
+
+    // Unwrap Next.js image proxy to get direct CDN URL
+    const proxied = img.getAttribute('src') || '';
+    if (proxied.includes('/_next/image')) {
+      const direct = unwrapNextImage(proxied);
+      if (direct) img.src = direct;
     }
 
     // Remove broken placeholder images (empty src, anchors, tiny SVG/GIF spinners)
